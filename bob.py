@@ -26,7 +26,7 @@ STATE_DONE = "DONE"
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 KEY_LENGTH = 5
-MSG_LENGTH = 5
+MSG_LENGTH = 10
 
 
 # ── Event Loop ────────────────────────────────────────────────────────────────
@@ -107,7 +107,7 @@ async def run_bob(reader: StreamReader, writer: StreamWriter) -> None:
         elif state == STATE_WAITING_PUBLIC_KEY:
             print(f"[{state}] Bob: opening epr socket with Alice")
             epr_socket = EPRSocket("Alice")
-            conn = NetQASMConnection("Bob", epr_sockets=[epr_socket], max_qubits=100)
+            conn = NetQASMConnection("Bob", epr_sockets=[epr_socket], max_qubits=1000)
             epr_qubits = epr_socket.recv_keep(number=KEY_LENGTH * MSG_LENGTH * 2)
             print(f"[{state}] Bob: opened epr socket with Alice")
             corrections = (await reader.readline()).decode().strip()

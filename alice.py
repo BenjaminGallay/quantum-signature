@@ -27,7 +27,7 @@ STATE_DONE = "DONE"
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 KEY_LENGTH = 5
-MSG_LENGTH = 5
+MSG_LENGTH = 10
 INPUT_ENV_VAR = "ALICE_INPUT_BITS"
 
 
@@ -154,7 +154,7 @@ async def run_alice(reader: StreamReader, writer: StreamWriter) -> None:
             conn = NetQASMConnection(
                 "Alice",
                 epr_sockets=[epr_socket],
-                max_qubits=100,
+                max_qubits=1000,
             )
             public_key = create_public_key(private_key, conn)
             print(f"[{state}] Alice: created public key")
