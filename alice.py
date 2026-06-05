@@ -26,8 +26,8 @@ STATE_DONE = "DONE"
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-KEY_LENGTH = 2
-MSG_LENGTH = 1
+KEY_LENGTH = 5
+MSG_LENGTH = 5
 INPUT_ENV_VAR = "ALICE_INPUT_BITS"
 
 
@@ -45,6 +45,7 @@ def choose_private_key() -> list[tuple[tuple[str]]]:
             theta0 += str(random.randint(0, 1))
             theta1 += str(random.randint(0, 1))
         private_key.append(((x0, theta0), (x1, theta1)))
+    print(f"[CREATING_KEYS] Alice: chose private key {private_key}")
     return private_key
 
 

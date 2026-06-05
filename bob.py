@@ -25,8 +25,8 @@ STATE_DONE = "DONE"
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-KEY_LENGTH = 2
-MSG_LENGTH = 1
+KEY_LENGTH = 5
+MSG_LENGTH = 5
 
 
 # ── Event Loop ────────────────────────────────────────────────────────────────
@@ -88,6 +88,7 @@ def verify_authenticity(epr_qubits, msg_key, conn):
         ancilla = int(future_ancilla)
         if ancilla == 1:
             verdict = False
+    conn.close()
     return verdict
 
 
@@ -104,6 +105,7 @@ async def run_bob(reader: StreamReader, writer: StreamWriter) -> None:
                 state = STATE_WAITING_PUBLIC_KEY
 
         elif state == STATE_WAITING_PUBLIC_KEY:
+            print(f"[{state}] Bob: opening epr socket with Alice")
             epr_socket = EPRSocket("Alice")
             conn = NetQASMConnection("Bob", epr_sockets=[epr_socket], max_qubits=100)
             epr_qubits = epr_socket.recv_keep(number=KEY_LENGTH * MSG_LENGTH * 2)
@@ -122,7 +124,12 @@ async def run_bob(reader: StreamReader, writer: StreamWriter) -> None:
 
         elif state == STATE_VERIFICATION:
             verdict = verify_authenticity(epr_qubits, msg_key, conn)
-            print(f"[{state}] Bob: verdict of authenticity {verdict}")
+            if verdict:
+                print(
+                    f"[{state}] Bob: every swap test is SUCCESSFUL, message is most likely authentic"
+                )
+            else:
+                print(f"[{state}] Bob: swap tests FAILED, message is NOT authentic")
             state = STATE_DONE
 
 
