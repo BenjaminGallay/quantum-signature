@@ -43,6 +43,14 @@ ATTACK_FLIP_ALL = "flip_all_bits"
 ATTACK_RANDOM_KEY = "random_key_only"
 ATTACK_CHANGE_SECRET_KEY = "change_secret_key"
 
+# Verification thresholds for a noisy channel, C1 < C2
+C1 = 0.20
+C2 = 0.45
+
+VERDICT_LEGITIMATE = "LEGITIMATE"
+VERDICT_AMBIGUOUS = "AMBIGUOUS"
+VERDICT_ILLEGITIMATE = "ILLEGITIMATE"
+
 
 # ── Event Loop ────────────────────────────────────────────────────────────────
 
@@ -245,7 +253,6 @@ def controlled_swap(control: Qubit, left: Qubit, right: Qubit) -> None:
 
 
 def verify_authenticity(epr_qubits, signed_blocks, conn):
-    verdict = True
     report = []
 
     for block in signed_blocks:
@@ -278,9 +285,6 @@ def verify_authenticity(epr_qubits, signed_blocks, conn):
             ancilla_result = int(future_ancilla)
             passed = ancilla_result == 0
 
-            if not passed:
-                verdict = False
-
             report.append(
                 {
                     "index": i,
@@ -290,15 +294,21 @@ def verify_authenticity(epr_qubits, signed_blocks, conn):
                     "passed": passed,
                 }
             )
+    
+    total_tests = len(report)
+    fail_count = sum(1 for r in report if not r["passed"])
 
-    return verdict, report
+    if fail_count <= C1 * total_tests:
+        verdict = VERDICT_LEGITIMATE
+    elif fail_count < C2 * total_tests:
+        verdict = VERDICT_AMBIGUOUS
+    else:
+        verdict = VERDICT_ILLIGETIMATE
+    return verdict, fail_count, report
 
 
-def print_verification_report(report) -> None:
+def print_verification_report(report, verdict, fail_count) -> None:
     print("Bob verification report:", flush=True)
-
-    pass_count = 0
-    fail_count = 0
 
     for i in range(MSG_LENGTH):
         bit_results = [item for item in report if item["index"] == i]
@@ -306,21 +316,27 @@ def print_verification_report(report) -> None:
         message_bit = bit_results[0]["bit"]
         ancillas = [item["ancilla"] for item in bit_results]
         passed = all(item["passed"] for item in bit_results)
-        result = "PASS" if passed else "FAIL"
-
-        if passed:
-            pass_count += 1
-        else:
-            fail_count += 1
+        result = ["PASS" if item["passed"] else "FAIL" for item in bit_results]
 
         print(f"  bit {i}: message_bit={message_bit}, ancillas={ancillas}, result={result}", flush=True)
 
-    total = pass_count + fail_count
-    pass_rate = pass_count / total
-    fail_rate = fail_count / total
+    total = len(report)
+    lower_bound = C1 * total
+    upper_bound = C2 * total
+    passed = total - fail_count
+    
+    print(f"[VERIFICATION] Swap-test totals: PASS={passed}, FAIL={fail_count}, total={total}", flush=True)
 
-    print(f"Bob summary: PASS={pass_count}, FAIL={fail_count}, total={total}", flush=True)
-    print(f"Bob summary: pass rate={pass_rate:.2%}, fail rate={fail_rate:.2%}", flush=True)
+    if verdict == VERDICT_LEGITIMATE:
+        print(f"[VERIFICATION] verdict: {verdict} - failures={fail_count} <= C1*M={lower_bound:.1f}:", flush=True)
+        print("The message is most likely authentic.", flush=True)
+    elif verdict == VERDICT_AMBIGUOUS:
+        print(f"[VERIFICATION] verdict: {verdict} - C1*M={lower_bound:.1f} < failures={fail_count} < C2={upper_bound:.1f}", flush=True)
+        print("The message is probably legitimate, but it looks like Alice is trying to cheat, " + 
+              "and therefore someone else might find the message illegitimate.", flush=True)
+    elif verdict == VERDICT_ILLEGITIMATE:
+        print(f"[VERIFICATION] verdict: {verdict} - fail rate={fail_count} >= C2*M={upper_bound:.1f}:", flush=True)
+        print("The message is illegitimate.")
 
 async def run_bob(reader: StreamReader, writer: StreamWriter) -> None:
     state = STATE_WAITING_HI
@@ -377,16 +393,9 @@ async def run_bob(reader: StreamReader, writer: StreamWriter) -> None:
             state = STATE_VERIFICATION
 
         elif state == STATE_VERIFICATION:
-            verdict, report = verify_authenticity(epr_qubits, signed_blocks, conn)
+            verdict, fail_count, report = verify_authenticity(epr_qubits, signed_blocks, conn)
 
-            print_verification_report(report)
-
-            if verdict:
-                print(
-                    f"[{state}] Bob: every swap test is SUCCESSFUL, message is most likely authentic"
-                )
-            else:
-                print(f"[{state}] Bob: swap tests FAILED, message is NOT authentic")
+            print_verification_report(report, verdict, fail_count)
 
             conn.close()
 

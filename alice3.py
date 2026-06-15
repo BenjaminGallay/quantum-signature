@@ -40,9 +40,20 @@ SIGNED_BLOCK_LENGTH = 1 + COPIES_PER_KEY * SECRET_KEY_LENGTH
 
 INPUT_ENV_VAR = "ALICE_INPUT_BITS"
 
+# NOISE denotes the probability that each individual qubit in the EPR pair is flipped
+NOISE = 0.15
+
 
 # ── Event Loop ────────────────────────────────────────────────────────────────
 
+def apply_noise(qubit: Qubit) -> None:
+    """Flips the qubit with a probability of p(NOISE)"""
+    if NOISE <= 0.0:
+        return
+    
+    r = random.random()
+    if r < NOISE:
+        qubit.X()
 
 def random_bits(n: int) -> str:
     return "".join(str(random.randint(0, 1)) for _ in range(n))
@@ -113,6 +124,8 @@ def teleport_public_key_batch(public_key_batch, epr_qubits, conn) -> str:
         for m in range(COPIES_PER_KEY):
             for k in range(FINGERPRINT_QUBITS):
                 index = (j * COPIES_PER_KEY + m) * FINGERPRINT_QUBITS + k
+
+                apply_noise(epr_qubits[index])
 
                 public_key_batch[j][m][k].cnot(epr_qubits[index])
                 public_key_batch[j][m][k].H()
