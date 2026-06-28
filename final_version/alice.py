@@ -9,8 +9,8 @@ from netqasm.runtime.settings import set_simulator
 
 set_simulator("simulaqron")
 
-from netqasm.sdk import EPRSocket, Qubit  
-from netqasm.sdk.external import NetQASMConnection  
+from netqasm.sdk import EPRSocket, Qubit
+from netqasm.sdk.external import NetQASMConnection
 from simulaqron.general.host_config import SocketsConfig
 from simulaqron.sdk.protocol import SimulaQronClassicalClient
 from simulaqron.settings import network_config, simulaqron_settings
@@ -25,13 +25,13 @@ STATE_DONE = "DONE"
 
 # ── Constants ──
 
-SECRET_KEY_LENGTH = 3 # Each secret key is a SECRET_KEY_LENGTH-bit string.
+SECRET_KEY_LENGTH = 3  # Each secret key is a SECRET_KEY_LENGTH-bit string.
 # A Hadamard fingerprint uses (SECRET_KEY_LENGTH + 1) qubit
-FINGERPRINT_QUBITS = SECRET_KEY_LENGTH + 1 
+FINGERPRINT_QUBITS = SECRET_KEY_LENGTH + 1
 
-#Change here, Max is (L=9, M=3) (L=28, M=1)
-MSG_LENGTH = 9 #the number of classical message bits
-COPIES_PER_KEY = 3 # M, the number of independent public-key copies per bit value
+# Change here, Max is (L=9, M=3) (L=28, M=1)
+MSG_LENGTH = 9  # the number of classical message bits
+COPIES_PER_KEY = 3  # M, the number of independent public-key copies per bit value
 
 PUBLIC_KEY_QUBITS = FINGERPRINT_QUBITS * MSG_LENGTH * 2 * COPIES_PER_KEY
 BATCH_PUBLIC_KEY_QUBITS = FINGERPRINT_QUBITS * 2 * COPIES_PER_KEY
@@ -40,7 +40,7 @@ CORRECTION_BITS = 2 * PUBLIC_KEY_QUBITS
 # signed block have 1 message bit with M secret keys
 SIGNED_BLOCK_LENGTH = 1 + COPIES_PER_KEY * SECRET_KEY_LENGTH
 
-INPUT_ENV_VAR = "ALICE_INPUT_BITS" #Alice can read message in the environment
+INPUT_ENV_VAR = "ALICE_INPUT_BITS"  # Alice can read message in the environment
 
 # NOISE denotes the probability that each individual qubit in the EPR pair is flipped
 NOISE = float(os.environ.get("NOISE", "0.0"))
@@ -49,21 +49,23 @@ PRIVATE_KEY = None
 
 # ── Event Loop ──
 
+
 def apply_noise(qubit: Qubit) -> None:
-    ##Flips the qubit with a probability of p(NOISE)
+    # Flips the qubit with a probability of p(NOISE)
     if NOISE <= 0.0:
         return
-    
+
     r = random.random()
     if r < NOISE:
         qubit.X()
+
 
 def random_bits(n: int) -> str:
     return "".join(str(random.randint(0, 1)) for _ in range(n))
 
 
 def choose_private_key() -> list[tuple[list[str], list[str]]]:
-    ## Generate Alice's private signing keys
+    # Generate Alice's private signing keys
     private_key = []
 
     for _ in range(MSG_LENGTH):
@@ -83,7 +85,7 @@ def choose_private_key() -> list[tuple[list[str], list[str]]]:
 
 
 def prepare_hadamard_fingerprint(conn: NetQASMConnection, bits: str) -> list[Qubit]:
-    ##Prepare the Hadamard fingerprint state for one secret key
+    # Prepare the Hadamard fingerprint state for one secret key
     if len(bits) != SECRET_KEY_LENGTH or any(bit not in "01" for bit in bits):
         raise ValueError(
             f"Hadamard fingerprint input must be a {SECRET_KEY_LENGTH}-bit string"
@@ -92,10 +94,10 @@ def prepare_hadamard_fingerprint(conn: NetQASMConnection, bits: str) -> list[Qub
     qubits = [Qubit(conn) for _ in range(FINGERPRINT_QUBITS)]
     index_qubits = qubits[:SECRET_KEY_LENGTH]
     value_qubit = qubits[SECRET_KEY_LENGTH]
-    
+
     for index_qubit in index_qubits:
         index_qubit.H()
-    #Encode E_c(x) into the value qubit using CNOT(index[j], value) whenever bits[j] == "1".
+    # Encode E_c(x) into the value qubit using CNOT(index[j], value) whenever bits[j] == "1".
     for j, bit in enumerate(bits):
         if bit == "1":
             index_qubits[j].cnot(value_qubit)
@@ -104,10 +106,10 @@ def prepare_hadamard_fingerprint(conn: NetQASMConnection, bits: str) -> list[Qub
 
 
 def create_public_key_for_index(private_key, index: int, conn):
-    #Create all quantum public key fingerprints for every message index 
+    # Create all quantum public key fingerprints for every message index
     fingerprints0 = []
     fingerprints1 = []
-    #Alice prepares M fingerprint copies for signing bit 0 and M fingerprint copies for signing bit 1.
+    # Alice prepares M fingerprint copies for signing bit 0 and M fingerprint copies for signing bit 1.
     for m in range(COPIES_PER_KEY):
         key0 = private_key[index][0][m]
         key1 = private_key[index][1][m]
@@ -119,16 +121,16 @@ def create_public_key_for_index(private_key, index: int, conn):
 
 
 def teleport_public_key_batch(public_key_batch, epr_qubits, conn) -> str:
-    #teleport a batch of quantum public keys to the receiver
+    # teleport a batch of quantum public keys to the receiver
     corrections = ""
 
-    for j in range(2): # j = 0, 1, which coresponds for bit 0 and 1 
-        for m in range(COPIES_PER_KEY): # M
-            for k in range(FINGERPRINT_QUBITS): # fingerprint states
+    for j in range(2):  # j = 0, 1, which coresponds for bit 0 and 1
+        for m in range(COPIES_PER_KEY):  # M
+            for k in range(FINGERPRINT_QUBITS):  # fingerprint states
                 index = (j * COPIES_PER_KEY + m) * FINGERPRINT_QUBITS + k
 
                 apply_noise(epr_qubits[index])
-                #teleportation
+                # teleportation
                 public_key_batch[j][m][k].cnot(epr_qubits[index])
                 public_key_batch[j][m][k].H()
 
@@ -136,14 +138,17 @@ def teleport_public_key_batch(public_key_batch, epr_qubits, conn) -> str:
                 epr_measure = epr_qubits[index].measure()
 
                 conn.flush()
-                #add measurement results to correction string, which will set to the receiver
+                # add measurement results to correction string, which will set to the receiver
                 corrections += str(int(q_measure))
                 corrections += str(int(epr_measure))
 
     return corrections
 
-def send_public_keys_to_receiver(private_key, epr_socket, conn, writer, receiver_name: str) -> None:
-    ##send public-key set to the receiver
+
+def send_public_keys_to_receiver(
+    private_key, epr_socket, conn, writer, receiver_name: str
+) -> None:
+    # send public-key set to the receiver
     corrections = ""
 
     for i in range(MSG_LENGTH):
@@ -156,9 +161,10 @@ def send_public_keys_to_receiver(private_key, epr_socket, conn, writer, receiver
     # send teleportation correction bits to the receiver.
     writer.write(f"{corrections}\n".encode())
     print(
-    f"Alice: sent public keys to {receiver_name} "
-    f"({PUBLIC_KEY_QUBITS} qubits, {len(corrections)} correction bits)",
-    flush=True)
+        f"Alice: sent public keys to {receiver_name} "
+        f"({PUBLIC_KEY_QUBITS} qubits, {len(corrections)} correction bits)",
+        flush=True,
+    )
 
 
 def is_valid_input_bits(bits: str) -> bool:
@@ -166,8 +172,8 @@ def is_valid_input_bits(bits: str) -> bool:
 
 
 async def get_input_bits() -> str:
-    #Get classical message bits
-    #If get invalid message or the program launched, set the message as 00...000
+    # Get classical message bits
+    # If get invalid message or the program launched, set the message as 00...000
     env_bits = os.environ.get(INPUT_ENV_VAR)
     if env_bits is not None:
         bits = env_bits.strip()
@@ -175,7 +181,7 @@ async def get_input_bits() -> str:
             return bits
         print(
             f"Alice: invalid {INPUT_ENV_VAR}={env_bits!r}; using default zero string",
-            flush=True
+            flush=True,
         )
         return "0" * MSG_LENGTH
 
@@ -212,7 +218,13 @@ def write_message(input_bits, private_key, writer) -> None:
     return
 
 
-async def run_alice(reader: StreamReader, writer: StreamWriter, receiver_name: str, private_key, send_signed_message: bool) -> None:
+async def run_alice(
+    reader: StreamReader,
+    writer: StreamWriter,
+    receiver_name: str,
+    private_key,
+    send_signed_message: bool,
+) -> None:
     state = STATE_WAITING_HI
 
     writer.write(b"HELLO:Alice\n")
@@ -236,9 +248,11 @@ async def run_alice(reader: StreamReader, writer: StreamWriter, receiver_name: s
 
         elif state == STATE_SENDING_PUBLIC_KEY:
             epr_socket = EPRSocket(receiver_name)
-            conn = NetQASMConnection( "Alice", epr_sockets=[epr_socket], max_qubits=1000)
+            conn = NetQASMConnection("Alice", epr_sockets=[epr_socket], max_qubits=1000)
 
-            send_public_keys_to_receiver(private_key, epr_socket, conn, writer, receiver_name)
+            send_public_keys_to_receiver(
+                private_key, epr_socket, conn, writer, receiver_name
+            )
             await writer.drain()
 
             conn.close()
@@ -258,7 +272,7 @@ async def run_alice(reader: StreamReader, writer: StreamWriter, receiver_name: s
             print(
                 f"Alice: sent signed message {input_bits} to {receiver_name} "
                 f"(signature length={MSG_LENGTH * SIGNED_BLOCK_LENGTH})",
-                flush=True
+                flush=True,
             )
 
             state = STATE_DONE

@@ -4,10 +4,11 @@ from asyncio import StreamReader, StreamWriter
 from pathlib import Path
 
 from netqasm.runtime.settings import set_simulator
+
 set_simulator("simulaqron")
 
-from netqasm.sdk import EPRSocket, Qubit  
-from netqasm.sdk.external import NetQASMConnection  
+from netqasm.sdk import EPRSocket, Qubit
+from netqasm.sdk.external import NetQASMConnection
 from netqasm.sdk.toolbox.gates import toffoli_gate
 from simulaqron.general.host_config import SocketsConfig
 from simulaqron.sdk.protocol import SimulaQronClassicalServer
@@ -24,11 +25,11 @@ STATE_DONE = "DONE"
 
 
 # ── Constants ──
-SECRET_KEY_LENGTH = 3# Each secret key is a SECRET_KEY_LENGTH-bit string.
+SECRET_KEY_LENGTH = 3  # Each secret key is a SECRET_KEY_LENGTH-bit string.
 # A Hadamard fingerprint uses (SECRET_KEY_LENGTH + 1) qubit
 FINGERPRINT_QUBITS = SECRET_KEY_LENGTH + 1
 
-##Keep this same with alice
+# Keep this same with alice
 MSG_LENGTH = 9
 COPIES_PER_KEY = 3
 
@@ -46,7 +47,7 @@ ATTACK_RANDOM_KEY = "random_key_only"
 ATTACK_CHANGE_SECRET_KEY = "change_secret_key"
 
 # Verification thresholds for a noisy channel, C1 < C2
-#C1 is the strong-accept threshold, and C2 is the reject threshold
+# C1 is the strong-accept threshold, and C2 is the reject threshold
 C1 = float(os.environ.get("C1", "0.15"))
 C2 = float(os.environ.get("C2", "0.30"))
 READOUT_NOISE = float(os.environ.get("READOUT_NOISE", "0.0"))
@@ -62,7 +63,7 @@ CHARLIE_EPR_QUBITS = None
 
 
 def apply_corrections(epr_qubits, corrections) -> None:
-    #Apply teleportation corrections to the received EPR halves
+    # Apply teleportation corrections to the received EPR halves
     expected_len = 2 * len(epr_qubits)
 
     if len(corrections) != expected_len:
@@ -82,8 +83,9 @@ def apply_corrections(epr_qubits, corrections) -> None:
 def random_bits(n: int) -> str:
     return "".join(str(random.randint(0, 1)) for _ in range(n))
 
+
 def apply_readout_noise(bit: int) -> int:
-    ##Flip the measured swap test result with probability READOUT_NOISE.
+    # Flip the measured swap test result with probability READOUT_NOISE.
     if READOUT_NOISE <= 0.0:
         return bit
 
@@ -96,6 +98,7 @@ def apply_readout_noise(bit: int) -> int:
 def flip_bit(bit: str) -> str:
     return "1" if bit == "0" else "0"
 
+
 def random_secret_keys() -> str:
     keys = ""
 
@@ -106,7 +109,7 @@ def random_secret_keys() -> str:
 
 
 def maybe_attack_message(msg_key: str) -> str:
-    ##Simulate Eve changing with Alice's signed message before Bob verifies it.
+    # Simulate Eve changing with Alice's signed message before Bob verifies it.
     attack_mode = os.environ.get(ATTACK_ENV_VAR, ATTACK_NONE).strip().lower()
 
     if attack_mode in ("", ATTACK_NONE):
@@ -135,7 +138,7 @@ def maybe_attack_message(msg_key: str) -> str:
 
         print(
             f"[ATTACK] flip_first_bit: bit {old_bit} -> {new_bit}, guessed {COPIES_PER_KEY} secret keys",
-            flush=True
+            flush=True,
         )
 
     elif attack_mode == ATTACK_FLIP_ALL:
@@ -207,7 +210,7 @@ def parse_signed_message(msg_key: str):
         ]
     """
     expected_len = MSG_LENGTH * SIGNED_BLOCK_LENGTH
-    #This error happend as MSG_LENGTH or COPIES_PER_KEY are different between Alice and Charlie
+    # This error happend as MSG_LENGTH or COPIES_PER_KEY are different between Alice and Charlie
     if len(msg_key) != expected_len:
         raise ValueError(
             f"bad signed message length {len(msg_key)}, expected {expected_len}"
@@ -243,7 +246,7 @@ def signed_blocks_to_message(signed_blocks) -> str:
 
 
 def prepare_hadamard_fingerprint(conn: NetQASMConnection, bits: str) -> list[Qubit]:
-    ##Prepare the Hadamard fingerprint state for one secret key
+    # Prepare the Hadamard fingerprint state for one secret key
     if len(bits) != SECRET_KEY_LENGTH or any(bit not in "01" for bit in bits):
         raise ValueError(
             f"Hadamard fingerprint input must be a {SECRET_KEY_LENGTH}-bit string"
@@ -280,14 +283,14 @@ def verify_authenticity(epr_qubits, signed_blocks, conn):
         secret_keys = block["secret_keys"]
 
         for m, secret_key in enumerate(secret_keys):
-            #reconstruct the fingerprint state from the revealed secret key
+            # reconstruct the fingerprint state from the revealed secret key
             reconstructed = prepare_hadamard_fingerprint(conn, secret_key)
-            #select the matching public key copy for this message index, bit value and copy number
+            # select the matching public key copy for this message index, bit value and copy number
             start = ((2 * i + msg_bit) * COPIES_PER_KEY + m) * FINGERPRINT_QUBITS
             end = start + FINGERPRINT_QUBITS
             epr_qubits_to_compare = epr_qubits[start:end]
 
-            #run a swap test
+            # run a swap test
             ancilla = Qubit(conn)
             ancilla.H()
             for j in range(FINGERPRINT_QUBITS):
@@ -296,7 +299,7 @@ def verify_authenticity(epr_qubits, signed_blocks, conn):
             ancilla.H()
             future_ancilla = ancilla.measure()
 
-            #measure the compared states
+            # measure the compared states
             for j in range(FINGERPRINT_QUBITS):
                 reconstructed[j].measure()
                 epr_qubits_to_compare[j].measure()
@@ -317,7 +320,7 @@ def verify_authenticity(epr_qubits, signed_blocks, conn):
                     "passed": passed,
                 }
             )
-    
+
     total_tests = len(report)
     fail_count = sum(1 for r in report if not r["passed"])
 
@@ -335,7 +338,7 @@ def verify_authenticity(epr_qubits, signed_blocks, conn):
 
 
 def print_verification_report(report, verdict, fail_count) -> None:
-    #print verification report
+    # print verification report
     print("Charlie verification report:", flush=True)
 
     for i in range(MSG_LENGTH):
@@ -358,25 +361,41 @@ def print_verification_report(report, verdict, fail_count) -> None:
     passed = total - fail_count
     fail_rate = fail_count / total if total > 0 else 0.0
 
-    print(f"[VERIFICATION] Swap-test totals: PASS={passed}, FAIL={fail_count}, total={total}", flush=True)
+    print(
+        f"[VERIFICATION] Swap-test totals: PASS={passed}, FAIL={fail_count}, total={total}",
+        flush=True,
+    )
     print(f"[VERIFICATION] fail rate={fail_rate:.2%}", flush=True)
-    #print(f"[VERIFICATION] thresholds: C1*total={lower_bound:.1f}, C2*total={upper_bound:.1f}", flush=True)
-    #print(f"[VERIFICATION] READOUT_NOISE={READOUT_NOISE}, C1={C1}, C2={C2}", flush=True)
+    # print(f"[VERIFICATION] thresholds: C1*total={lower_bound:.1f}, C2*total={upper_bound:.1f}", flush=True)
+    # print(f"[VERIFICATION] READOUT_NOISE={READOUT_NOISE}, C1={C1}, C2={C2}", flush=True)
 
     if verdict == VERDICT_LEGITIMATE:
-        print(f"[VERIFICATION] verdict: {verdict} - failures={fail_count} <= C1*total={lower_bound:.1f}", flush=True)
+        print(
+            f"[VERIFICATION] verdict: {verdict} - failures={fail_count} <= C1*total={lower_bound:.1f}",
+            flush=True,
+        )
         print("The message is strongly accepted.", flush=True)
 
     elif verdict == VERDICT_AMBIGUOUS:
-        print(f"[VERIFICATION] verdict: {verdict} - C1*total={lower_bound:.1f} < failures={fail_count} < C2*total={upper_bound:.1f}", flush=True)
-        print("The message is accepted only at a weak level and is not safely transferable.", flush=True)
+        print(
+            f"[VERIFICATION] verdict: {verdict} - C1*total={lower_bound:.1f} < failures={fail_count} < C2*total={upper_bound:.1f}",
+            flush=True,
+        )
+        print(
+            "The message is accepted only at a weak level and is not safely transferable.",
+            flush=True,
+        )
 
     elif verdict == VERDICT_ILLEGITIMATE:
-        print(f"[VERIFICATION] verdict: {verdict} - failures={fail_count} >= C2*total={upper_bound:.1f}", flush=True)
+        print(
+            f"[VERIFICATION] verdict: {verdict} - failures={fail_count} >= C2*total={upper_bound:.1f}",
+            flush=True,
+        )
         print("The message is rejected as illegitimate.", flush=True)
 
     print(f"CHARLIE_FINAL_VERDICT:{verdict}", flush=True)
-    #print(f"CHARLIE_FINAL_COUNTS:PASS={passed},FAIL={fail_count},TOTAL={total}", flush=True)
+    # print(f"CHARLIE_FINAL_COUNTS:PASS={passed},FAIL={fail_count},TOTAL={total}", flush=True)
+
 
 async def run_charlie(reader: StreamReader, writer: StreamWriter) -> None:
     global CHARLIE_CONN
@@ -396,21 +415,28 @@ async def run_charlie(reader: StreamReader, writer: StreamWriter) -> None:
                 writer.write(b"HELLO:Charlie\n")
                 await writer.drain()
 
-                print(f"[{state}] Charlie: received HELLO from Alice, responded", flush=True)
+                print(
+                    f"[{state}] Charlie: received HELLO from Alice, responded",
+                    flush=True,
+                )
                 state = STATE_WAITING_PUBLIC_KEY
 
             elif msg == "HELLO:Bob":
                 writer.write(b"HELLO:Charlie\n")
                 await writer.drain()
 
-                print(f"[{state}] Charlie: received HELLO from Bob, responded", flush=True)
+                print(
+                    f"[{state}] Charlie: received HELLO from Bob, responded", flush=True
+                )
                 state = STATE_WAITING_FORWARDED_MESSAGE
 
         elif state == STATE_WAITING_PUBLIC_KEY:
             print(f"[{state}] Charlie: opening epr socket with Alice", flush=True)
 
             epr_socket = EPRSocket("Alice")
-            conn = NetQASMConnection("Charlie", epr_sockets=[epr_socket], max_qubits=1000)
+            conn = NetQASMConnection(
+                "Charlie", epr_sockets=[epr_socket], max_qubits=1000
+            )
 
             epr_qubits = epr_socket.recv_keep(number=PUBLIC_KEY_QUBITS)
 
@@ -420,7 +446,10 @@ async def run_charlie(reader: StreamReader, writer: StreamWriter) -> None:
             )
 
             corrections = (await reader.readline()).decode().strip()
-            print(f"[{state}] Charlie: received corrections of length {len(corrections)}", flush=True)
+            print(
+                f"[{state}] Charlie: received corrections of length {len(corrections)}",
+                flush=True,
+            )
 
             apply_corrections(epr_qubits, corrections)
 
@@ -435,7 +464,10 @@ async def run_charlie(reader: StreamReader, writer: StreamWriter) -> None:
                 flush=True,
             )
 
-            print(f"[{state}] Charlie: ready for Bob's forwarded signed message", flush=True)
+            print(
+                f"[{state}] Charlie: ready for Bob's forwarded signed message",
+                flush=True,
+            )
 
             state = STATE_DONE
 
@@ -445,7 +477,7 @@ async def run_charlie(reader: StreamReader, writer: StreamWriter) -> None:
             forwarded = (await reader.readline()).decode().strip()
 
             if forwarded.startswith("REJECTED_BY_BOB:"):
-                bob_verdict = forwarded[len("REJECTED_BY_BOB:"):]
+                bob_verdict = forwarded[len("REJECTED_BY_BOB:") :]
                 print(
                     f"[{state}] Charlie: Bob did not forward the signature because Bob verdict={bob_verdict}",
                     flush=True,
@@ -454,7 +486,7 @@ async def run_charlie(reader: StreamReader, writer: StreamWriter) -> None:
                 state = STATE_DONE
 
             elif forwarded.startswith("SIGNED_MESSAGE:"):
-                forwarded_msg_key = forwarded[len("SIGNED_MESSAGE:"):]
+                forwarded_msg_key = forwarded[len("SIGNED_MESSAGE:") :]
                 print(
                     f"[{state}] Charlie: received forwarded signed message of length {len(forwarded_msg_key)}",
                     flush=True,
@@ -466,7 +498,10 @@ async def run_charlie(reader: StreamReader, writer: StreamWriter) -> None:
             msg = signed_blocks_to_message(signed_blocks)
 
             print(f"[{state}] Charlie: verifying transferred message {msg}", flush=True)
-            print(f"[{state}] Charlie: parsed {len(signed_blocks)} signed blocks", flush=True)
+            print(
+                f"[{state}] Charlie: parsed {len(signed_blocks)} signed blocks",
+                flush=True,
+            )
 
             verdict, fail_count, report = verify_authenticity(
                 CHARLIE_EPR_QUBITS,

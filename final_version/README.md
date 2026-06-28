@@ -117,3 +117,7 @@ The demo follows this sequence:
 ```
 
 This demonstrates that Bob can pass Alice's signed message to Charlie, and Charlie can verify it using his own quantum public key copies.
+
+## References
+
+The idea behind this implementation stems from this 2001 paper : Gottesman, D., & Chuang, I. (2001). Quantum digital signatures.
