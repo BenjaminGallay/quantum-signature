@@ -14,7 +14,7 @@ from simulaqron.sdk.protocol import SimulaQronClassicalServer
 from simulaqron.settings import network_config, simulaqron_settings
 from simulaqron.settings.network_config import NodeConfigType
 
-# ── States ────────────────────────────────────────────────────────────────────
+# ── States ──
 
 STATE_WAITING_HI = "WAITING_HI"
 STATE_WAITING_PUBLIC_KEY = "WAITING_PUBLIC_KEY"
@@ -23,8 +23,9 @@ STATE_VERIFICATION = "VERIFICATION"
 STATE_DONE = "DONE"
 
 
-# ── Constants ─────────────────────────────────────────────────────────────────
-SECRET_KEY_LENGTH = 3
+# ── Constants ──
+SECRET_KEY_LENGTH = 3# Each secret key is a SECRET_KEY_LENGTH-bit string.
+# A Hadamard fingerprint uses (SECRET_KEY_LENGTH + 1) qubit
 FINGERPRINT_QUBITS = SECRET_KEY_LENGTH + 1
 
 ##Keep this same with alice
@@ -36,6 +37,7 @@ CORRECTION_BITS = 2 * PUBLIC_KEY_QUBITS
 SIGNED_BLOCK_LENGTH = 1 + COPIES_PER_KEY * SECRET_KEY_LENGTH
 
 
+# Attack simulation settings
 ATTACK_ENV_VAR = "ATTACK_MODE"
 ATTACK_NONE = "none"
 ATTACK_FLIP_FIRST = "flip_first_bit"
@@ -44,8 +46,9 @@ ATTACK_RANDOM_KEY = "random_key_only"
 ATTACK_CHANGE_SECRET_KEY = "change_secret_key"
 
 # Verification thresholds for a noisy channel, C1 < C2
-C1 = float(os.environ.get("C1", "0.20"))
-C2 = float(os.environ.get("C2", "0.45"))
+#C1 is the strong-accept threshold, and C2 is the reject threshold
+C1 = float(os.environ.get("C1", "0.15"))
+C2 = float(os.environ.get("C2", "0.30"))
 READOUT_NOISE = float(os.environ.get("READOUT_NOISE", "0.0"))
 
 VERDICT_LEGITIMATE = "LEGITIMATE"
@@ -55,10 +58,11 @@ CHARLIE_CONN = None
 CHARLIE_EPR_QUBITS = None
 
 
-# ── Event Loop ────────────────────────────────────────────────────────────────
+# ── Event Loop ──
 
 
 def apply_corrections(epr_qubits, corrections) -> None:
+    #Apply teleportation corrections to the received EPR halves
     expected_len = 2 * len(epr_qubits)
 
     if len(corrections) != expected_len:
@@ -198,12 +202,12 @@ def parse_signed_message(msg_key: str):
     Parse Alice's signed message.
     Return a list of blocks:
         [
-            {"index": 0, "bit": 1, "secret_key": "..."},
+            {"index": 0, "bit": 1, "secret_key": ["...", "...", "..."]},
             ...
         ]
     """
     expected_len = MSG_LENGTH * SIGNED_BLOCK_LENGTH
-
+    #This error happend as MSG_LENGTH or COPIES_PER_KEY are different between Alice and Charlie
     if len(msg_key) != expected_len:
         raise ValueError(
             f"bad signed message length {len(msg_key)}, expected {expected_len}"
@@ -217,6 +221,7 @@ def parse_signed_message(msg_key: str):
         bit = int(msg_key[start])
         secret_keys = []
 
+        # extract the M revealed secret keys after the message bit.
         for m in range(COPIES_PER_KEY):
             key_start = start + 1 + m * SECRET_KEY_LENGTH
             key_end = key_start + SECRET_KEY_LENGTH
@@ -238,7 +243,7 @@ def signed_blocks_to_message(signed_blocks) -> str:
 
 
 def prepare_hadamard_fingerprint(conn: NetQASMConnection, bits: str) -> list[Qubit]:
-    """Prepare 1/sqrt(2^n) sum_c |c>|bits . c mod 2>."""
+    ##Prepare the Hadamard fingerprint state for one secret key
     if len(bits) != SECRET_KEY_LENGTH or any(bit not in "01" for bit in bits):
         raise ValueError(
             f"Hadamard fingerprint input must be a {SECRET_KEY_LENGTH}-bit string"
@@ -266,6 +271,7 @@ def controlled_swap(control: Qubit, left: Qubit, right: Qubit) -> None:
 
 
 def verify_authenticity(epr_qubits, signed_blocks, conn):
+    # verify Bob's signed message using Charlie's public key copies.
     report = []
 
     for block in signed_blocks:
@@ -274,21 +280,23 @@ def verify_authenticity(epr_qubits, signed_blocks, conn):
         secret_keys = block["secret_keys"]
 
         for m, secret_key in enumerate(secret_keys):
+            #reconstruct the fingerprint state from the revealed secret key
             reconstructed = prepare_hadamard_fingerprint(conn, secret_key)
-
+            #select the matching public key copy for this message index, bit value and copy number
             start = ((2 * i + msg_bit) * COPIES_PER_KEY + m) * FINGERPRINT_QUBITS
             end = start + FINGERPRINT_QUBITS
             epr_qubits_to_compare = epr_qubits[start:end]
 
+            #run a swap test
             ancilla = Qubit(conn)
             ancilla.H()
-
             for j in range(FINGERPRINT_QUBITS):
                 controlled_swap(ancilla, reconstructed[j], epr_qubits_to_compare[j])
 
             ancilla.H()
             future_ancilla = ancilla.measure()
 
+            #measure the compared states
             for j in range(FINGERPRINT_QUBITS):
                 reconstructed[j].measure()
                 epr_qubits_to_compare[j].measure()
@@ -327,6 +335,7 @@ def verify_authenticity(epr_qubits, signed_blocks, conn):
 
 
 def print_verification_report(report, verdict, fail_count) -> None:
+    #print verification report
     print("Charlie verification report:", flush=True)
 
     for i in range(MSG_LENGTH):
@@ -479,7 +488,7 @@ async def run_charlie(reader: StreamReader, writer: StreamWriter) -> None:
             state = STATE_DONE
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
+# ── Entry point ──
 
 if __name__ == "__main__":
     _here = Path(__file__).parent
