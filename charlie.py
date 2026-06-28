@@ -1,4 +1,3 @@
-import asyncio
 import os
 import random
 from asyncio import StreamReader, StreamWriter
@@ -11,7 +10,7 @@ from netqasm.sdk import EPRSocket, Qubit
 from netqasm.sdk.external import NetQASMConnection  
 from netqasm.sdk.toolbox.gates import toffoli_gate
 from simulaqron.general.host_config import SocketsConfig
-from simulaqron.sdk.protocol import SimulaQronClassicalClient, SimulaQronClassicalServer
+from simulaqron.sdk.protocol import SimulaQronClassicalServer
 from simulaqron.settings import network_config, simulaqron_settings
 from simulaqron.settings.network_config import NodeConfigType
 
@@ -19,9 +18,8 @@ from simulaqron.settings.network_config import NodeConfigType
 
 STATE_WAITING_HI = "WAITING_HI"
 STATE_WAITING_PUBLIC_KEY = "WAITING_PUBLIC_KEY"
-STATE_WAITING_MESSAGE = "WAITING_MESSAGE"
+STATE_WAITING_FORWARDED_MESSAGE = "WAITING_FORWARDED_MESSAGE"
 STATE_VERIFICATION = "VERIFICATION"
-STATE_TRANSFER_TO_CHARLIE = "TRANSFER_TO_CHARLIE"
 STATE_DONE = "DONE"
 
 
@@ -30,13 +28,14 @@ SECRET_KEY_LENGTH = 3# Each secret key is a SECRET_KEY_LENGTH-bit string.
 # A Hadamard fingerprint uses (SECRET_KEY_LENGTH + 1) qubit
 FINGERPRINT_QUBITS = SECRET_KEY_LENGTH + 1
 
-#Keep this same with alice
+##Keep this same with alice
 MSG_LENGTH = 9
 COPIES_PER_KEY = 3
 
 PUBLIC_KEY_QUBITS = FINGERPRINT_QUBITS * MSG_LENGTH * 2 * COPIES_PER_KEY
 CORRECTION_BITS = 2 * PUBLIC_KEY_QUBITS
 SIGNED_BLOCK_LENGTH = 1 + COPIES_PER_KEY * SECRET_KEY_LENGTH
+
 
 # Attack simulation settings
 ATTACK_ENV_VAR = "ATTACK_MODE"
@@ -55,6 +54,8 @@ READOUT_NOISE = float(os.environ.get("READOUT_NOISE", "0.0"))
 VERDICT_LEGITIMATE = "LEGITIMATE"
 VERDICT_AMBIGUOUS = "AMBIGUOUS"
 VERDICT_ILLEGITIMATE = "ILLEGITIMATE"
+CHARLIE_CONN = None
+CHARLIE_EPR_QUBITS = None
 
 
 # ── Event Loop ──
@@ -206,7 +207,7 @@ def parse_signed_message(msg_key: str):
         ]
     """
     expected_len = MSG_LENGTH * SIGNED_BLOCK_LENGTH
-    #This error happend as MSG_LENGTH or COPIES_PER_KEY are different between Alice and bob
+    #This error happend as MSG_LENGTH or COPIES_PER_KEY are different between Alice and Charlie
     if len(msg_key) != expected_len:
         raise ValueError(
             f"bad signed message length {len(msg_key)}, expected {expected_len}"
@@ -254,7 +255,7 @@ def prepare_hadamard_fingerprint(conn: NetQASMConnection, bits: str) -> list[Qub
 
     for index_qubit in index_qubits:
         index_qubit.H()
-    #Encode E_c(x) into the value qubit using CNOT(index[j], value) whenever bits[j] == "1".
+
     for j, bit in enumerate(bits):
         if bit == "1":
             index_qubits[j].cnot(value_qubit)
@@ -270,7 +271,7 @@ def controlled_swap(control: Qubit, left: Qubit, right: Qubit) -> None:
 
 
 def verify_authenticity(epr_qubits, signed_blocks, conn):
-    # verify Alice's signed message using swap tests
+    # verify Bob's signed message using Charlie's public key copies.
     report = []
 
     for block in signed_blocks:
@@ -335,10 +336,9 @@ def verify_authenticity(epr_qubits, signed_blocks, conn):
 
 def print_verification_report(report, verdict, fail_count) -> None:
     #print verification report
-    print("Bob verification report:", flush=True)
+    print("Charlie verification report:", flush=True)
 
     for i in range(MSG_LENGTH):
-        #collect results of swap test
         bit_results = [item for item in report if item["index"] == i]
 
         message_bit = bit_results[0]["bit"]
@@ -358,16 +358,8 @@ def print_verification_report(report, verdict, fail_count) -> None:
     passed = total - fail_count
     fail_rate = fail_count / total if total > 0 else 0.0
 
-    detected_bits = 0
-    for i in range(MSG_LENGTH):
-        bit_results = [item for item in report if item["index"] == i]
-        if any(not item["passed"] for item in bit_results):
-            detected_bits += 1
-    bit_detection_rate = detected_bits / MSG_LENGTH if MSG_LENGTH > 0 else 0.0
-
     print(f"[VERIFICATION] Swap-test totals: PASS={passed}, FAIL={fail_count}, total={total}", flush=True)
-    print(f"[VERIFICATION] copy FAIL={fail_count}/{total}, copy fail rate={fail_rate:.2%}", flush=True)
-    print(f"[VERIFICATION] detected bits={detected_bits}/{MSG_LENGTH}, bit detection rate={bit_detection_rate:.2%}", flush=True)
+    print(f"[VERIFICATION] fail rate={fail_rate:.2%}", flush=True)
     #print(f"[VERIFICATION] thresholds: C1*total={lower_bound:.1f}, C2*total={upper_bound:.1f}", flush=True)
     #print(f"[VERIFICATION] READOUT_NOISE={READOUT_NOISE}, C1={C1}, C2={C2}", flush=True)
 
@@ -383,110 +375,115 @@ def print_verification_report(report, verdict, fail_count) -> None:
         print(f"[VERIFICATION] verdict: {verdict} - failures={fail_count} >= C2*total={upper_bound:.1f}", flush=True)
         print("The message is rejected as illegitimate.", flush=True)
 
-    #print(f"FINAL_VERDICT:{verdict}", flush=True)
-    #print(f"FINAL_COUNTS:PASS={passed},FAIL={fail_count},TOTAL={total}", flush=True)
+    print(f"CHARLIE_FINAL_VERDICT:{verdict}", flush=True)
+    #print(f"CHARLIE_FINAL_COUNTS:PASS={passed},FAIL={fail_count},TOTAL={total}", flush=True)
 
+async def run_charlie(reader: StreamReader, writer: StreamWriter) -> None:
+    global CHARLIE_CONN
+    global CHARLIE_EPR_QUBITS
 
-async def run_bob_to_charlie(reader: StreamReader, writer: StreamWriter, msg_key: str, verdict: str,) -> None:
-    writer.write(b"HELLO:Bob\n")
-    await writer.drain()
-
-    print("Bob->Charlie: sent HELLO, waiting for Charlie's response", flush=True)
-
-    msg = (await reader.readline()).decode().strip()
-    print(f"Bob->Charlie: received {msg}", flush=True)
-
-    if verdict == VERDICT_LEGITIMATE:
-        writer.write(f"SIGNED_MESSAGE:{msg_key}\n".encode())
-        await writer.drain()
-
-        print("Bob->Charlie: verdict is LEGITIMATE, forwarded signed message to Charlie", flush=True)
-    else:
-        writer.write(f"REJECTED_BY_BOB:{verdict}\n".encode())
-        await writer.drain()
-
-        print(
-            f"Bob->Charlie: did not forward signed message because verdict={verdict}",
-            flush=True,
-        )
-
-async def run_bob(reader: StreamReader, writer: StreamWriter) -> None:
     state = STATE_WAITING_HI
-
-    msg_key = None
-    verdict = None
-    conn = None
+    forwarded_msg_key = None
 
     while state != STATE_DONE:
         if state == STATE_WAITING_HI:
-            print(f"[{state}] Bob: waiting for message")
+            print(f"[{state}] Charlie: waiting for HELLO", flush=True)
+
             msg = (await reader.readline()).decode().strip()
+            print(f"[{state}] Charlie: received {msg}", flush=True)
 
-            print(f"[{state}] Bob: received {msg}")
-
-            if msg.startswith("HELLO:"):
-                writer.write(b"HELLO:Bob\n")
+            if msg == "HELLO:Alice":
+                writer.write(b"HELLO:Charlie\n")
                 await writer.drain()
 
-                print(f"[{state}] Bob: received HELLO, responded")
-
+                print(f"[{state}] Charlie: received HELLO from Alice, responded", flush=True)
                 state = STATE_WAITING_PUBLIC_KEY
 
+            elif msg == "HELLO:Bob":
+                writer.write(b"HELLO:Charlie\n")
+                await writer.drain()
+
+                print(f"[{state}] Charlie: received HELLO from Bob, responded", flush=True)
+                state = STATE_WAITING_FORWARDED_MESSAGE
+
         elif state == STATE_WAITING_PUBLIC_KEY:
-            #print(f"[{state}] Bob: opening epr socket with Alice")
+            print(f"[{state}] Charlie: opening epr socket with Alice", flush=True)
 
             epr_socket = EPRSocket("Alice")
-            conn = NetQASMConnection("Bob", epr_sockets=[epr_socket], max_qubits=1000)
+            conn = NetQASMConnection("Charlie", epr_sockets=[epr_socket], max_qubits=1000)
 
             epr_qubits = epr_socket.recv_keep(number=PUBLIC_KEY_QUBITS)
-            print(f"[{state}] Bob: configuration: MSG_LENGTH={MSG_LENGTH}, COPIES_PER_KEY={COPIES_PER_KEY}, PUBLIC_KEY_QUBITS={PUBLIC_KEY_QUBITS}, READOUT_NOISE={READOUT_NOISE}, C1={C1}, C2={C2}", flush=True)
+
+            print(
+                f"[{state}] Charlie: receiving {PUBLIC_KEY_QUBITS} public-key qubits from Alice",
+                flush=True,
+            )
 
             corrections = (await reader.readline()).decode().strip()
-            #print(f"[{state}] Bob: received corrections {corrections}")
-            print(f"[{state}] Bob: received corrections of length {len(corrections)}")
+            print(f"[{state}] Charlie: received corrections of length {len(corrections)}", flush=True)
 
             apply_corrections(epr_qubits, corrections)
-            print(f"[{state}] Bob: applied corrections")
 
-            state = STATE_WAITING_MESSAGE
+            CHARLIE_CONN = conn
+            CHARLIE_EPR_QUBITS = epr_qubits
 
-        elif state == STATE_WAITING_MESSAGE:
-            msg_key = (await reader.readline()).decode().strip()
-            #print(f"Bob: received original signed message {msg_key}")
-            print(f"Bob: received signed message of length {len(msg_key)}")
+            print(
+                f"[{state}] Charlie: stored quantum public keys. "
+                f"MSG_LENGTH={MSG_LENGTH}, COPIES_PER_KEY={COPIES_PER_KEY}, "
+                f"PUBLIC_KEY_QUBITS={PUBLIC_KEY_QUBITS}, READOUT_NOISE={READOUT_NOISE}, "
+                f"C1={C1}, C2={C2}",
+                flush=True,
+            )
 
-            msg_key = maybe_attack_message(msg_key)
-            signed_blocks = parse_signed_message(msg_key)
+            print(f"[{state}] Charlie: ready for Bob's forwarded signed message", flush=True)
 
-            msg = signed_blocks_to_message(signed_blocks)
-            print(f"Bob: verifying message {msg}")
-            #print(f"Bob: parsed signed blocks {signed_blocks}")
-            #print(f"Bob: parsed {len(signed_blocks)} signed blocks")
+            state = STATE_DONE
 
-            state = STATE_VERIFICATION
+        elif state == STATE_WAITING_FORWARDED_MESSAGE:
+            print(f"[{state}] Charlie: waiting for Bob's forwarded message", flush=True)
+
+            forwarded = (await reader.readline()).decode().strip()
+
+            if forwarded.startswith("REJECTED_BY_BOB:"):
+                bob_verdict = forwarded[len("REJECTED_BY_BOB:"):]
+                print(
+                    f"[{state}] Charlie: Bob did not forward the signature because Bob verdict={bob_verdict}",
+                    flush=True,
+                )
+                print("Charlie: transferred signature NOT ACCEPTED", flush=True)
+                state = STATE_DONE
+
+            elif forwarded.startswith("SIGNED_MESSAGE:"):
+                forwarded_msg_key = forwarded[len("SIGNED_MESSAGE:"):]
+                print(
+                    f"[{state}] Charlie: received forwarded signed message of length {len(forwarded_msg_key)}",
+                    flush=True,
+                )
+                state = STATE_VERIFICATION
 
         elif state == STATE_VERIFICATION:
-            verdict, fail_count, report = verify_authenticity(epr_qubits, signed_blocks, conn)
+            signed_blocks = parse_signed_message(forwarded_msg_key)
+            msg = signed_blocks_to_message(signed_blocks)
+
+            print(f"[{state}] Charlie: verifying transferred message {msg}", flush=True)
+            print(f"[{state}] Charlie: parsed {len(signed_blocks)} signed blocks", flush=True)
+
+            verdict, fail_count, report = verify_authenticity(
+                CHARLIE_EPR_QUBITS,
+                signed_blocks,
+                CHARLIE_CONN,
+            )
 
             print_verification_report(report, verdict, fail_count)
 
-            state = STATE_TRANSFER_TO_CHARLIE
+            if verdict == VERDICT_ILLEGITIMATE:
+                print("Charlie: transferred signature REJECTED", flush=True)
+            else:
+                print("Charlie: transferred signature ACCEPTED", flush=True)
 
-        elif state == STATE_TRANSFER_TO_CHARLIE:
-            print(f"[{state}] Bob: starting transfer step with Charlie", flush=True)
-
-            sockets_config = SocketsConfig(network_config, "default", NodeConfigType.APP)
-            client_to_charlie = SimulaQronClassicalClient(sockets_config)
-
-            await asyncio.to_thread(
-                client_to_charlie.run_client,
-                "Charlie",
-                run_bob_to_charlie,
-                msg_key,
-                verdict,
-            )
-
-            conn.close()
+            CHARLIE_CONN.close()
+            CHARLIE_CONN = None
+            CHARLIE_EPR_QUBITS = None
 
             state = STATE_DONE
 
@@ -499,7 +496,7 @@ if __name__ == "__main__":
     network_config.read_from_file(_here / "simulaqron_network.json")
 
     sockets_config = SocketsConfig(network_config, "default", NodeConfigType.APP)
-    server = SimulaQronClassicalServer(sockets_config, "Bob")
-    server.register_client_handler(run_bob)
-    print("Bob: starting server...", flush=True)
+    server = SimulaQronClassicalServer(sockets_config, "Charlie")
+    server.register_client_handler(run_charlie)
+    print("Charlie: starting server...", flush=True)
     server.start_serving()
